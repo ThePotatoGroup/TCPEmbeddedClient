@@ -17,14 +17,11 @@
  */
 
 #include <stdio.h>
-// We can probably remove this if 
 #if __MICROBLAZE__ || __PPC__
 #include "xmk.h"
 #include "sys/timer.h"
 #include "xenv_standalone.h"
 #endif
-// -----------------------------
-
 #include "xparameters.h"
 #include "lwipopts.h"
 
@@ -67,11 +64,16 @@ int main()
         xil_printf("ERROR initializing platform.\r\n");
         return -1;
     }
-    sys_thread_new("main_thrd", (void(*)(void*))main_thread, 0,
-		   THREAD_STACKSIZE,
-		   DEFAULT_THREAD_PRIO);
-    vTaskStartScheduler();
+#ifndef OS_IS_FREERTOS
+    /* start the kernel - does not return */
+    xilkernel_main();
+#else
+	sys_thread_new("main_thrd", (void(*)(void*))main_thread, 0,
+                THREAD_STACKSIZE,
+                DEFAULT_THREAD_PRIO);
+	vTaskStartScheduler();
     while(1);
+#endif
     return 0;
 }
 
@@ -81,24 +83,35 @@ void network_thread(void *p)
 {
     struct netif *netif;
     struct ip_addr ipaddr, netmask, gw;
+#if LWIP_DHCP==1
+    int mscnt = 0;
+#endif
     /* the mac address of the board. this should be unique per board */
     unsigned char mac_ethernet_address[] = { 0x00, 0x0a, 0x35, 0x00, 0x01, 0x02 };
 
     netif = &server_netif;
 
+#if LWIP_DHCP==0
     /* initliaze IP addresses to be used */
     IP4_ADDR(&ipaddr,  192, 168,   1, 10);
     IP4_ADDR(&netmask, 255, 255, 255,  0);
     IP4_ADDR(&gw,      192, 168,   1,  1);
+#endif
 
     /* print out IP settings of the board */
     print("\r\n\r\n");
     print("-----lwIP Socket Mode Demo Application ------\r\n");
 
+#if LWIP_DHCP==0
     print_ip_settings(&ipaddr, &netmask, &gw);
     /* print all application headers */
+#endif
 
-
+#if LWIP_DHCP==1
+	ipaddr.addr = 0;
+	gw.addr = 0;
+	netmask.addr = 0;
+#endif
     /* Add network interface to the netif_list, and set it as default */
     if (!xemac_add(netif, &ipaddr, &netmask, &gw, mac_ethernet_address, PLATFORM_EMAC_BASEADDR)) {
         xil_printf("Error adding N/W interface\r\n");
@@ -114,12 +127,28 @@ void network_thread(void *p)
             THREAD_STACKSIZE,
             DEFAULT_THREAD_PRIO);
 
+#if LWIP_DHCP==1
+    dhcp_start(netif);
+    while (1) {
+#ifdef OS_IS_FREERTOS
+		vTaskDelay(DHCP_FINE_TIMER_MSECS / portTICK_RATE_MS);
+#else
+		sleep(DHCP_FINE_TIMER_MSECS);
+#endif
+		dhcp_fine_tmr();
+		mscnt += DHCP_FINE_TIMER_MSECS;
+		if (mscnt >= DHCP_COARSE_TIMER_SECS*1000) {
+			dhcp_coarse_tmr();
+			mscnt = 0;
+		}
+	}
+#else
     print_headers();
-    /** Launch our TCP receiver app. **/
-    sys_thread_new("echod", echo_application_thread, 0,
-		   THREAD_STACKSIZE,
-		   DEFAULT_THREAD_PRIO);
+    launch_app_threads();
+#ifdef OS_IS_FREERTOS
     vTaskDelete(NULL);
+#endif
+#endif
     return;
 }
 
@@ -135,39 +164,44 @@ int main_thread()
     sys_thread_new("NW_THRD", network_thread, NULL,
             THREAD_STACKSIZE,
             DEFAULT_THREAD_PRIO);
+#if LWIP_DHCP==1
+    while (1) {
+#ifdef OS_IS_FREERTOS
+    	vTaskDelay(DHCP_FINE_TIMER_MSECS / portTICK_RATE_MS);
+#else
+    	sleep(DHCP_FINE_TIMER_MSECS);
+#endif
+		if (server_netif.ip_addr.addr) {
+			xil_printf("DHCP request success\r\n");
+			print_ip_settings(&(server_netif.ip_addr), &(server_netif.netmask), &(server_netif.gw));
+			/* print all application headers */
+			print_headers();
+			/* now we can start application threads */
+			launch_app_threads();
+			break;
+		}
+		mscnt += DHCP_FINE_TIMER_MSECS;
+		if (mscnt >= 10000) {
+			xil_printf("ERROR: DHCP request timed out\r\n");
+			xil_printf("Configuring default IP of 192.168.1.10\r\n");
+			IP4_ADDR(&(server_netif.ip_addr),  192, 168,   1, 10);
+			IP4_ADDR(&(server_netif.netmask), 255, 255, 255,  0);
+			IP4_ADDR(&(server_netif.gw),      192, 168,   1,  1);
+			print_ip_settings(&(server_netif.ip_addr), &(server_netif.netmask), &(server_netif.gw));
+			/* print all application headers */
+			print_headers();
+			launch_app_threads();
+			break;
+		}
+
+	}
+#ifdef OS_IS_FREERTOS
+	vTaskDelete(NULL);
+#endif
+#endif
+
     return 0;
 }
-
-print_headers()
-{
-    xil_printf("\r\n");
-    xil_printf("%20s %6s %s\r\n", "Server", "Port", "Connect With..");
-    xil_printf("%20s %6s %s\r\n", "--------------------", "------", "--------------------");
-
-    if (INCLUDE_ECHO_SERVER)
-        print_echo_app_header();
-
-    if (INCLUDE_RXPERF_SERVER)
-        print_rxperf_app_header();
-
-    if (INCLUDE_TXPERF_CLIENT)
-        print_txperf_app_header();
-
-    if (INCLUDE_TFTP_SERVER)
-        print_tftp_app_header();
-
-    if (INCLUDE_WEB_SERVER)
-        print_web_app_header();
-
-    if (INCLUDE_UTXPERF_CLIENT)
-    	print_utxperf_app_header();
-
-    if (INCLUDE_URXPERF_SERVER)
-    	print_urxperf_app_header();
-
-    xil_printf("\r\n");
-}
-
 #ifdef __arm__
 void vApplicationMallocFailedHook( void )
 {

@@ -25,103 +25,94 @@
 #include "lwipopts.h"
 
 #include "config_apps.h"
+// It's possible we could just remove this directive.
 #ifdef __arm__
 #include "xil_printf.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #endif
-
-u16_t echo_port = 7;
+//-------------------------------------------------
+#define SERVER_PORT (u16_t) 12000
+//u16_t echo_port = 7;
 
 void print_echo_app_header()
 {
-    xil_printf("%20s %6d %s\r\n", "echo server",
-                        echo_port,
-                        "$ telnet <board_ip> 7");
+  xil_printf("%20s %6d %s\r\n", "echo server",
+	     SERVER_PORT,
+	     "$ telnet <board_ip> 7");
 
 }
 
 /* thread spawned for each connection */
 void process_echo_request(void *p)
 {
-	int sd = (int)p;
-	int RECV_BUF_SIZE = 2048;
-	char recv_buf[RECV_BUF_SIZE];
-	int n, nwrote;
+  int sd = (int)p;
+  int RECV_BUF_SIZE = 2048;
+  char recv_buf[RECV_BUF_SIZE];
+  int n, nwrote;
 
-	while (1) {
-		/* read a max of RECV_BUF_SIZE bytes from socket */
-		if ((n = read(sd, recv_buf, RECV_BUF_SIZE)) < 0) {
-			xil_printf("%s: error reading from socket %d, closing socket\r\n", __FUNCTION__, sd);
-#ifndef OS_IS_FREERTOS			
-			close(sd);
-			return;
-#else
-			break;
-#endif
-		}
+  while (1) {
+    /* read a max of RECV_BUF_SIZE bytes from socket */
+    if ((n = read(sd, recv_buf, RECV_BUF_SIZE)) < 0) {
+      xil_printf("%s: error reading from socket %d, closing socket\r\n", __FUNCTION__, sd);
+      break;
+    }
 
-		/* break if the recved message = "quit" */
-		if (!strncmp(recv_buf, "quit", 4))
-			break;
+    /* break if client closed connection */
+    if (n <= 0)
+      break;
 
-		/* break if client closed connection */
-		if (n <= 0)
-			break;
+    /* Let's not write for now. */
+    //    if ((nwrote = write(sd, recv_buf, n)) < 0) {
+    //xil_printf("%s: ERROR responding to client echo request. received = %d, written = %d\r\n",
+    //__FUNCTION__, n, nwrote);
+    //xil_printf("Closing socket %d\r\n", sd);
+    //break;
+    //}
+    
+    /* for now print crap out. */
+    // TODO: Eventually replace this with a queue or something so we can transmit the
+    // data to the driver.
+    // TODO: Add logic for parsing the header file and stuffz
+    int i;
+    xil_printf("received buffer:");
+    for (i = 0; i < RECV_BUF_SIZE; i++) {
+      xil_printf("%c", recv_buf[i]);
+    }
+    xil_printf("\n");
+  }
 
-		/* handle request */
-		if ((nwrote = write(sd, recv_buf, n)) < 0) {
-			xil_printf("%s: ERROR responding to client echo request. received = %d, written = %d\r\n",
-					__FUNCTION__, n, nwrote);
-			xil_printf("Closing socket %d\r\n", sd);
-#ifndef OS_IS_FREERTOS
-			close(sd);
-			return;
-#else
-			break;
-#endif
-		}
-		int i;
-		xil_printf("received buffer:");
-		for (i = 0; i < RECV_BUF_SIZE; i++) {
-			xil_printf("%c", recv_buf[i]);
-		}
-		xil_printf("\n");
-	}
-
-	/* close connection */
-	close(sd);
-#ifdef OS_IS_FREERTOS
-	vTaskDelete(NULL);
-#endif
+  /* close connection */
+  close(sd);
+  vTaskDelete(NULL);
 }
 
 void echo_application_thread()
 {
-	int sock, new_sd;
-	struct sockaddr_in address, remote;
-	int size;
+  int sock, new_sd;
+  struct sockaddr_in address, remote;
+  int size;
 
-	if ((sock = lwip_socket(AF_INET, SOCK_STREAM, 0)) < 0)
-		return;
+  if ((sock = lwip_socket(AF_INET, SOCK_STREAM, 0)) < 0)
+    return;
 
-	address.sin_family = AF_INET;
-	address.sin_port = htons(echo_port);
-	address.sin_addr.s_addr = INADDR_ANY;
+  address.sin_family = AF_INET;
+  address.sin_port = htons(SERVER_PORT);
+  address.sin_addr.s_addr = INADDR_ANY;
 
-	if (lwip_bind(sock, (struct sockaddr *)&address, sizeof (address)) < 0)
-		return;
+  if (lwip_bind(sock, (struct sockaddr *)&address, sizeof (address)) < 0)
+    return;
 
-	lwip_listen(sock, 0);
+  lwip_listen(sock, 0);
 
-	size = sizeof(remote);
+  size = sizeof(remote);
 
-	while (1) {
-		if ((new_sd = lwip_accept(sock, (struct sockaddr *)&remote, (socklen_t *)&size)) > 0) {
-			sys_thread_new("echos", process_echo_request,
-				(void*)new_sd,
-				THREAD_STACKSIZE,
-				DEFAULT_THREAD_PRIO);
-		}
-	}
+  while (1) {
+    if ((new_sd = lwip_accept(sock, (struct sockaddr *)&remote, (socklen_t *)&size)) > 0) {
+      sys_thread_new("AudioRcv", process_echo_request,
+		     (void*)new_sd,
+		     THREAD_STACKSIZE,
+		     DEFAULT_THREAD_PRIO);
+    }
+  }
 }
