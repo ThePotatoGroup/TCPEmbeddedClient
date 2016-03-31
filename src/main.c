@@ -37,32 +37,27 @@
 #include "netif/xadapter.h"
 #include "lwip/dhcp.h"
 #include "config_apps.h"
-#if __arm__
 #include "task.h"
 #include "portmacro.h"
 #include "xil_printf.h"
 int main_thread();
-#endif
 void print_headers();
-void launch_app_threads();
+void tcp_thread();
 
-void print_ip(char *msg, struct ip_addr *ip)
-{
+void print_ip(char *msg, struct ip_addr *ip) {
     print(msg);
     xil_printf("%d.%d.%d.%d\r\n", ip4_addr1(ip), ip4_addr2(ip),
             ip4_addr3(ip), ip4_addr4(ip));
 }
 
-void print_ip_settings(struct ip_addr *ip, struct ip_addr *mask, struct ip_addr *gw)
-{
+void print_ip_settings(struct ip_addr *ip, struct ip_addr *mask, struct ip_addr *gw) {
 
     print_ip("Board IP: ", ip);
     print_ip("Netmask : ", mask);
     print_ip("Gateway : ", gw);
 }
 
-int main()
-{
+int main() {
     if (init_platform() < 0) {
         xil_printf("ERROR initializing platform.\r\n");
         return -1;
@@ -77,8 +72,7 @@ int main()
 
 struct netif server_netif;
 
-void network_thread(void *p)
-{
+void network_thread(void *p) {
     struct netif *netif;
     struct ip_addr ipaddr, netmask, gw;
     /* the mac address of the board. this should be unique per board */
@@ -93,7 +87,7 @@ void network_thread(void *p)
 
     /* print out IP settings of the board */
     print("\r\n\r\n");
-    print("-----lwIP Socket Mode Demo Application ------\r\n");
+    print("----- Launching TCP Client ------\r\n");
 
     print_ip_settings(&ipaddr, &netmask, &gw);
     /* print all application headers */
@@ -116,19 +110,15 @@ void network_thread(void *p)
 
     print_headers();
     /** Launch our TCP receiver app. **/
-    sys_thread_new("echod", echo_application_thread, 0,
+    sys_thread_new("tcp_client", tcp_thread, 0,
 		   THREAD_STACKSIZE,
 		   DEFAULT_THREAD_PRIO);
     vTaskDelete(NULL);
     return;
 }
 
-int main_thread()
-{
-#if LWIP_DHCP==1
-	int mscnt = 0;
-#endif
-	/* initialize lwIP before calling sys_thread_new */
+int main_thread() {
+  /* initialize lwIP before calling sys_thread_new */
     lwip_init();
 
     /* any thread using lwIP should be created using sys_thread_new */
@@ -138,39 +128,8 @@ int main_thread()
     return 0;
 }
 
-print_headers()
-{
-    xil_printf("\r\n");
-    xil_printf("%20s %6s %s\r\n", "Server", "Port", "Connect With..");
-    xil_printf("%20s %6s %s\r\n", "--------------------", "------", "--------------------");
 
-    if (INCLUDE_ECHO_SERVER)
-        print_echo_app_header();
-
-    if (INCLUDE_RXPERF_SERVER)
-        print_rxperf_app_header();
-
-    if (INCLUDE_TXPERF_CLIENT)
-        print_txperf_app_header();
-
-    if (INCLUDE_TFTP_SERVER)
-        print_tftp_app_header();
-
-    if (INCLUDE_WEB_SERVER)
-        print_web_app_header();
-
-    if (INCLUDE_UTXPERF_CLIENT)
-    	print_utxperf_app_header();
-
-    if (INCLUDE_URXPERF_SERVER)
-    	print_urxperf_app_header();
-
-    xil_printf("\r\n");
-}
-
-#ifdef __arm__
-void vApplicationMallocFailedHook( void )
-{
+void vApplicationMallocFailedHook( void ) {
 	/* vApplicationMallocFailedHook() will only be called if
 	configUSE_MALLOC_FAILED_HOOK is set to 1 in FreeRTOSConfig.h.  It is a hook
 	function that will get called if a call to pvPortMalloc() fails.
@@ -187,8 +146,7 @@ void vApplicationMallocFailedHook( void )
 }
 /*-----------------------------------------------------------*/
 
-void vApplicationStackOverflowHook( xTaskHandle *pxTask, signed char *pcTaskName )
-{
+void vApplicationStackOverflowHook( xTaskHandle *pxTask, signed char *pcTaskName ) {
 	( void ) pcTaskName;
 	( void ) pxTask;
 
@@ -202,10 +160,7 @@ void vApplicationStackOverflowHook( xTaskHandle *pxTask, signed char *pcTaskName
 	taskDISABLE_INTERRUPTS();
 	for( ;; );
 }
-void vApplicationSetupHardware( void )
-{
+
+void vApplicationSetupHardware( void ) {
 
 }
-
-#endif
-
